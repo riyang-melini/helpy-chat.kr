@@ -12,10 +12,10 @@
         #chat-history { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 10px; background: #fafafa; }
         .input-area { display: flex; padding: 15px; border-top: 1px solid #eee; }
         input { flex: 1; padding: 12px; border: 1px solid #ddd; border-radius: 25px; outline: none; padding-left: 20px; }
-        button { background: #007bff; color: white; border: none; border-radius: 50%; width: 40px; height: 40px; margin-left: 10px; cursor: pointer; }
-        .msg { padding: 10px 15px; border-radius: 18px; max-width: 75%; font-size: 0.95rem; }
-        .user-msg { align-self: flex-end; background: #007bff; color: white; }
-        .bot-msg { align-self: flex-start; background: #e9ecef; color: #333; }
+        button { background: #007bff; color: white; border: none; border-radius: 50%; width: 40px; height: 40px; margin-left: 10px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 1.2rem; }
+        .msg { padding: 10px 15px; border-radius: 18px; max-width: 75%; font-size: 0.95rem; word-break: break-all; }
+        .user-msg { align-self: flex-end; background: #007bff; color: white; border-bottom-right-radius: 2px; }
+        .bot-msg { align-self: flex-start; background: #e9ecef; color: #333; border-bottom-left-radius: 2px; }
         #status-bar { font-size: 0.75rem; color: #666; text-align: center; padding: 5px; background: #eee; }
     </style>
 </head>
@@ -23,13 +23,13 @@
 
 <div class="chat-card">
     <div class="header">Helpy Chatbot</div>
-    <div id="status-bar">시스템 준비 중... (라이브러리 설치 중)</div>
+    <div id="status-bar">라이브러리 로딩 중...</div>
     <div id="chat-history">
-        <div class="msg bot-msg">환경을 설정하고 있습니다. 잠시만 기다려주세요...</div>
+        <div class="msg bot-msg">환경 설정 중입니다. 1분 정도 소요될 수 있습니다...</div>
     </div>
     <div class="input-area">
-        <input type="text" id="user-input" placeholder="메시지를 입력하세요..." onkeypress="if(event.keyCode==13) document.getElementById('send-btn').click()">
-        <button id="send-btn" py-click="chat_logic">➔</button>
+        <input type="text" id="user-input" placeholder="메시지를 입력하세요...">
+        <button id="send-btn">➔</button>
     </div>
 </div>
 
@@ -39,59 +39,16 @@
 
 <script type="py">
     import pandas as pd
+    import datetime
+    import numpy as np
     from sentence_transformers import SentenceTransformer
     from sklearn.metrics.pairwise import cosine_similarity
-    import datetime
-    from pyscript import document
+    from pyscript import document, window
+    from pyodide.ffi import create_proxy
 
-    # 상태 업데이트 함수
-    def update_status(text):
-        document.querySelector("#status-bar").innerText = text
-
-    # 모델 및 데이터 준비
-    update_status("AI 모델 로딩 중... (시간이 걸릴 수 있습니다)")
-    model = SentenceTransformer('jhgan/ko-sroberta-multitask')
-
-    # CSV 로드 시도 (파일명이 다를 경우를 위해 예외 처리)
-    try:
-        # 깃허브에 올린 csv 파일명과 동일해야 합니다.
-        df = pd.read_csv('helpy 발화 - 시트1.csv') 
-    except:
-        update_status("CSV 파일을 찾지 못해 기본 모드로 동작합니다.")
-        df = pd.DataFrame({
-            '사용자 발화': ['안녕', '이름'],
-            '챗봇 발화': ['안녕하세요!', '저는 헬피입니다.']
-        })
-
-    df = df[~df['챗봇 발화'].isna()]
-    df['embedding'] = df['사용자 발화'].map(lambda x: list(model.encode(str(x))))
-    
-    update_status("채팅 가능")
-    document.querySelector("#chat-history").innerHTML += '<div class="msg bot-msg">준비가 끝났습니다! 무엇이든 물어보세요.</div>'
-
-    async def chat_logic(event):
-        input_box = document.querySelector("#user-input")
-        text = input_box.value.strip()
-        if not text: return
-        
-        add_message(text, "user-msg")
-        input_box.value = ""
-
-        if text.lower() in ['잘있어', 'break']:
-            response = '안녕히 가세요!'
-        elif '시간' in text:
-            response = f"현재 시간은 {datetime.datetime.now().strftime('%H:%M')}예요!"
-        else:
-            embedding = model.encode(text)
-            df['distance'] = df['embedding'].map(lambda x: cosine_similarity([embedding], [x]).squeeze())
-            answer = df.loc[df['distance'].idxmax()]
-
-            if answer['distance'] >= 0.6:
-                response = answer['챗봇 발화']
-            else:
-                response = "모르겠어요, 아직 학습되지 않았나봐요."
-
-        add_message(response, "bot-msg")
+    # --- 전역 변수 설정 ---
+    model = None
+    df = None
 
     def add_message(content, class_name):
         history = document.querySelector("#chat-history")
@@ -101,17 +58,81 @@
         history.appendChild(new_msg)
         history.scrollTop = history.scrollHeight
 
-    # 버튼 클릭 이벤트 바인딩 (명시적 Proxy 생성)
-    click_proxy = create_proxy(chat_logic)
-    send_btn.addEventListener("click", click_proxy)
+    def update_status(text):
+        document.querySelector("#status-bar").innerText = text
 
-    # 엔터키 이벤트 바인딩
-    async def on_keypress(event):
+    # --- 초기화 로직 ---
+    async def init():
+        global model, df
+        try:
+            update_status("AI 모델 불러오는 중...")
+            model = SentenceTransformer('jhgan/ko-sroberta-multitask')
+            
+            update_status("데이터 읽는 중...")
+            try:
+                # 파일명이 정확해야 합니다.
+                df = pd.read_csv('helpy 발화 - 시트1.csv')
+            except Exception as e:
+                print(f"CSV 로드 에러: {e}")
+                df = pd.DataFrame({
+                    '사용자 발화': ['안녕', '시간'],
+                    '챗봇 발화': ['안녕하세요!', '현재 시간을 알려드릴까요?']
+                })
+
+            df = df[~df['챗봇 발화'].isna()]
+            update_status("데이터 임베딩 중...")
+            df['embedding'] = df['사용자 발화'].map(lambda x: list(model.encode(str(x))))
+            
+            update_status("채팅 준비 완료")
+            add_message("모든 준비가 끝났습니다! 대화를 시작하세요.", "bot-msg")
+        except Exception as e:
+            update_status(f"에러 발생: {str(e)}")
+
+    # --- 채팅 전송 로직 ---
+    async def chat_logic(event):
+        input_box = document.querySelector("#user-input")
+        text = input_box.value.strip()
+        if not text or model is None:
+            return
+        
+        # 1. 사용자 메시지 표시
+        add_message(text, "user-msg")
+        input_box.value = ""
+
+        # 2. 로직 처리
+        if text.lower() in ['잘있어', 'break']:
+            response = 'Helpy: 안녕히 가세요!'
+        elif '시간' in text:
+            response = f"현재 시간은 {datetime.datetime.now().strftime('%H:%M')}예요!"
+        else:
+            embedding = model.encode(text)
+            # 코사인 유사도 계산
+            df['distance'] = df['embedding'].map(lambda x: cosine_similarity([embedding], [x]).squeeze())
+            answer = df.loc[df['distance'].idxmax()]
+
+            if answer['distance'] >= 0.6:
+                response = f"Helpy: {answer['챗봇 발화']}"
+            else:
+                response = "Helpy: 모르겠어요, 아직 학습되지 않았나봐요."
+
+        # 3. 챗봇 응답 표시
+        add_message(response, "bot-msg")
+
+    # --- 이벤트 리스너 등록 ---
+    # 버튼 클릭 및 엔터 키 바인딩
+    send_proxy = create_proxy(chat_logic)
+    document.querySelector("#send-btn").addEventListener("click", send_proxy)
+
+    async def on_keydown(event):
         if event.key == "Enter":
             await chat_logic(None)
-            
-    keypress_proxy = create_proxy(on_keypress)
-    user_input.addEventListener("keypress", keypress_proxy)
+    
+    keydown_proxy = create_proxy(on_keydown)
+    document.querySelector("#user-input").addEventListener("keydown", keydown_proxy)
+
+    # 실행 시작
+    import asyncio
+    asyncio.ensure_future(init())
 </script>
 
 </body>

@@ -18,7 +18,7 @@ import datetime
 model = SentenceTransformer('jhgan/ko-sroberta-multitask')
 
 # Load and preprocess the dataframe
-df = pd.read_csv('/content/drive/MyDrive/헬피 챗봇 csv/helpy 발화 - 시트1.csv')
+df = pd.read_csv('helpy 발화 - 시트1.csv')
 df = df[~df['챗봇 발화'].isna()]
 df['embedding'] = df['사용자 발화'].map(lambda x: list(model.encode(x)))
 

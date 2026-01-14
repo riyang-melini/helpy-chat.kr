@@ -100,6 +100,18 @@
         new_msg.innerText = content
         history.appendChild(new_msg)
         history.scrollTop = history.scrollHeight
+
+    # 버튼 클릭 이벤트 바인딩 (명시적 Proxy 생성)
+    click_proxy = create_proxy(chat_logic)
+    send_btn.addEventListener("click", click_proxy)
+
+    # 엔터키 이벤트 바인딩
+    async def on_keypress(event):
+        if event.key == "Enter":
+            await chat_logic(None)
+            
+    keypress_proxy = create_proxy(on_keypress)
+    user_input.addEventListener("keypress", keypress_proxy)
 </script>
 
 </body>
